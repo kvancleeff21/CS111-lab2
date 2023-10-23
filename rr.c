@@ -183,7 +183,11 @@ main (int argc, char *argv[])
   long total_response_time = 0;
 
   /* Your code here */
-  
+  for (long i = 0; i < ps.nprocesses; i++) {
+      printf("%d", ps.process[i].pid);
+      printf("%d", ps.process[i].arrival_time);
+      printf("%d", ps.process[i].burst_time);
+  }
   /* End of "Your code here" */
 
   printf ("Average wait time: %.2f\n",

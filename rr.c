@@ -208,6 +208,8 @@ main (int argc, char *argv[])
   long total_response_time = 0;
 
   /* Your code here */
+  struct process_list cpu;
+  TAILQ_INIT(&cpu);
   bool dynamic = false;
   if (quantum_length <= 0) {
       quantum_length = 1;
@@ -248,6 +250,7 @@ main (int argc, char *argv[])
             total_wait_time += current_process->completion_time - current_process->arrival_time - current_process->burst_time;
             current_process->cpu_consumption += current_process->remaining_time;
             numOfProcessesArrived--;
+            TAILQ_REMOVE(&cpu, current_process, pointers); // removing finished process from cpu linked list so it doesn't fuck up median calc
         }
         else if (current_process->arrival_time <= timer) {
             long current_time = timer;
@@ -265,6 +268,7 @@ main (int argc, char *argv[])
             current_process->remaining_time = current_process->remaining_time - quantum_length;
             current_process->cpu_consumption += quantum_length;
             TAILQ_INSERT_TAIL(&list, current_process, pointers);
+            TAILQ_INSERT_TAIL(&cpu, current_process, pointers); // cpu linked list is used to calc medians properly
         }
         cpu_arr[current_process->array_placeholder] = current_process->cpu_consumption;
         if (dynamic) {

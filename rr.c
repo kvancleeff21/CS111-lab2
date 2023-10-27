@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <math.h>
+#include <limits.h>
 
 /* A process table entry.  */
 struct process
@@ -163,6 +164,7 @@ init_processes (char const *filename)
 int compare(const void* a, const void* b) {
     return (*(int*)a - *(int*)b);
 }
+
 long calculateMedian(struct process_list* list) {
     int count = 0;
 
@@ -213,6 +215,37 @@ long calculateMedian(struct process_list* list) {
     long roundedMedian = round(median);
     return roundedMedian;
 }
+int compare_nodes(const struct process* a, const struct process* b) {
+    return a->arrival_time - b->arrival_time;
+}
+void bubble_sort(struct process_list* head, int (*compare)(const struct process*, const struct process*)) {
+    int swapped;
+    struct process* current;
+    struct process* temp;
+    struct process* end = NULL;
+
+    do {
+        swapped = 0;
+        current = TAILQ_FIRST(head);
+
+        while (current->pointers.tqe_next != end) {
+            struct process* next = TAILQ_NEXT(current, pointers);
+
+            if (compare(current, next) > 0) {
+                // Swap the elements
+                TAILQ_REMOVE(head, current, pointers);
+                TAILQ_INSERT_AFTER(head, next, current, pointers);
+                swapped = 1;
+            }
+
+            current = next;
+        }
+        end = current;
+    } while (swapped);
+}
+long min(long a, long b) {
+    return (a < b) ? a : b;
+}
 int
 main (int argc, char *argv[])
 {
@@ -247,40 +280,60 @@ main (int argc, char *argv[])
       ps.process[i].remaining_time = ps.process[i].burst_time;
       ps.process[i].cpu_consumption = 0;
       ps.process[i].first_run = false;
+      TAILQ_INSERT_TAIL(&list, &ps.process[i], pointers);
   }
-    long timer = ps.process[0].arrival_time;
-    ps.process[0].first_queue = false;
-    TAILQ_INSERT_TAIL(&list, &ps.process[0], pointers);
-
+    bubble_sort(&list, compare_nodes);
+    struct process* first = TAILQ_FIRST(&list);
+    long timer = first->arrival_time;
+    first->first_queue = false;
+    TAILQ_INIT(&list);
+    TAILQ_INSERT_TAIL(&list, first, pointers);
+    long numOfCompletedProcesses = 0;
     while (!TAILQ_EMPTY(&list)) {
+        long count = 0;
+        bool taskFinished = false;
+        bool conflict = false;
         struct process *current_process = TAILQ_FIRST(&list);
-        printf("current process pid: %ld\n", current_process->pid);
-        printf("timer: %ld\n", timer);
         TAILQ_REMOVE(&list, current_process, pointers); // pop off queue
-
         if(!current_process->first_run) {
             total_response_time += timer - current_process->arrival_time;
             current_process->first_run = true;
         }
         if (current_process->remaining_time <= quantum_length && current_process->arrival_time <= timer) {
             long current_time = timer;
-            while(timer < current_time + current_process->remaining_time) {
-                for (long i = 1; i < ps.nprocesses; i++) {
+            while(timer <= current_time + current_process->remaining_time) {
+                for (long i = 0; i < ps.nprocesses; i++) {
+                    if(ps.process[i].first_queue && ps.process[i].arrival_time == timer) {
+                        conflict = true;
+                    }
                     if(ps.process[i].first_queue && ps.process[i].arrival_time <= timer) {
                         TAILQ_INSERT_TAIL(&list, &ps.process[i], pointers);
                         ps.process[i].first_queue = false;
                     }
                 }
                 timer++;
+            }
+            timer--;
+            struct process *test;
+            TAILQ_FOREACH(test, &list, pointers) {
+                count++;
             }
             current_process->completion_time = timer;
             total_wait_time += current_process->completion_time - current_process->arrival_time - current_process->burst_time;
             current_process->cpu_consumption += current_process->remaining_time;
+            taskFinished = true;
+            numOfCompletedProcesses++;
         }
         else if (current_process->arrival_time <= timer) {
             long current_time = timer;
-            while(timer < current_time + quantum_length) {
-                for (long i = 1; i < ps.nprocesses; i++) {
+            while(timer <= current_time + quantum_length) {
+                if(timer == current_time + quantum_length) {
+                    TAILQ_INSERT_TAIL(&list, current_process, pointers);
+                }
+                for (long i = 0; i < ps.nprocesses; i++) {
+                    if(ps.process[i].first_queue && ps.process[i].arrival_time == timer) {
+                        conflict = true;
+                    }
                     if(ps.process[i].first_queue && ps.process[i].arrival_time <= timer) {
                         TAILQ_INSERT_TAIL(&list, &ps.process[i], pointers);
                         ps.process[i].first_queue = false;
@@ -288,16 +341,47 @@ main (int argc, char *argv[])
                 }
                 timer++;
             }
+            timer--;
             current_process->remaining_time = current_process->remaining_time - quantum_length;
             current_process->cpu_consumption += quantum_length;
-            TAILQ_INSERT_TAIL(&list, current_process, pointers);
+            struct process *test;
+            TAILQ_FOREACH(test, &list, pointers) {
+                count++;
+            }
         }
-        timer++;
+        if(conflict && count == 2) {
+
+        }
+        else if (count > 1) {
+            timer++;
+        }
+        else if(taskFinished) {
+            timer++;
+        }
         long median;
         if(isDynamic) {
             median = calculateMedian(&list);
             quantum_length = median;
         }
+        if(quantum_length == 0) {
+            quantum_length = 1;
+        }
+        long minArrivalTime = LONG_MAX;
+        if(TAILQ_EMPTY(&list) && numOfCompletedProcesses != ps.nprocesses) {
+            int index = 0;
+            for (long i = 0; i < ps.nprocesses; i++) {
+                if(ps.process[i].first_queue) {
+                    minArrivalTime = min(minArrivalTime, ps.process[i].arrival_time);
+                }
+                if(ps.process[i].arrival_time == minArrivalTime) {
+                    timer = minArrivalTime;
+                    index = i;
+                }
+            }
+            TAILQ_INSERT_TAIL(&list, &ps.process[index], pointers);
+            ps.process[index].first_queue = false;
+        }
+
     }
   /* End of "Your code here" */
 
